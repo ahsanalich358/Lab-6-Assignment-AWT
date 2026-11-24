@@ -1,0 +1,41 @@
+{
+  "name": "csc337-lab-assignment-06-saas-platform",
+  "version": "1.0.0",
+  "description": "Multi-Tenant B2B SaaS Platform with Apache Kafka, Database Performance Tuning (N+1 & EXPLAIN ANALYZE), Connection Pooling, and Serverless Async Worker with Cold-Start Analysis",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "seed": "node scripts/seed-db.js",
+    "benchmark:nplusone": "node scripts/benchmark-nplusone.js",
+    "benchmark:explain": "node scripts/benchmark-explain.js",
+    "benchmark:coldstart": "node scripts/benchmark-coldstart.js",
+    "test:isolation": "node tests/tenant-isolation.test.js",
+    "test:kafka": "node tests/kafka-pipeline.test.js",
+    "test:all": "node scripts/run-all-benchmarks.js"
+  },
+  "keywords": [
+    "multi-tenancy",
+    "saas",
+    "kafka",
+    "database-tuning",
+    "explain-analyze",
+    "connection-pooling",
+    "serverless",
+    "cold-start"
+  ],
+  "author": "CSC337 Advanced Web Technologies",
+  "license": "MIT",
+  "dependencies": {
+    "@electric-sql/pglite": "^0.2.14",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "kafkajs": "^2.2.4",
+    "pdfkit": "^0.16.0",
+    "pg": "^8.13.3",
+    "uuid": "^11.1.0"
+  }
+}
