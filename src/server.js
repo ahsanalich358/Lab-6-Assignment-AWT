@@ -1,6 +1,7 @@
 import { createApp } from './app.js';
 import { config } from './config/index.js';
 import { db } from './db/connection.js';
+import { autoSeedIfEmpty } from './db/auto-seed.js';
 import { OrderProducer } from './kafka/producer.js';
 import { OrderConsumerService } from './kafka/consumer.js';
 
@@ -15,12 +16,15 @@ async function bootstrap() {
     console.log('[Bootstrap] Initializing Database & Connection Pool...');
     await db.initialize();
 
-    // 2. Initialize Kafka Producer & Consumer Group
+    // 2. Auto-seed if database is fresh
+    await autoSeedIfEmpty();
+
+    // 3. Initialize Kafka Producer & Consumer Group
     console.log('[Bootstrap] Initializing Apache Kafka Event-Driven Subsystem...');
     await OrderProducer.init();
     await OrderConsumerService.start();
 
-    // 3. Start Express HTTP Server
+    // 4. Start Express HTTP Server
     const app = createApp();
     const server = app.listen(config.port, () => {
       console.log(`[Bootstrap] HTTP Server running on http://localhost:${config.port}`);

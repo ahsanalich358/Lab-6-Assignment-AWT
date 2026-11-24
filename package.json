@@ -27,6 +27,9 @@
   ],
   "author": "CSC337 Advanced Web Technologies",
   "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "dependencies": {
     "@electric-sql/pglite": "^0.2.14",
     "cors": "^2.8.5",

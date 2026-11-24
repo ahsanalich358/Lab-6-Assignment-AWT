@@ -3,7 +3,7 @@ services:
     name: csc337-saas-platform
     runtime: node
     plan: free
-    buildCommand: npm install && npm run seed
+    buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
     envVars:
