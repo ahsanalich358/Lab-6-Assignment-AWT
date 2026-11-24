@@ -2,6 +2,7 @@
 ## Multi-Tenant B2B SaaS Platform: Database Tuning, Kafka EDA & Serverless Worker
 
 > **GitHub Repository:** [https://github.com/ahsanalich358/Lab-6-Assignment-AWT](https://github.com/ahsanalich358/Lab-6-Assignment-AWT)  
+> **Live Deployed Frontend (Vercel):** [https://lab-6-assignment-awt-public.vercel.app/](https://lab-6-assignment-awt-public.vercel.app/)  
 > **Course:** CSC337 - Advanced Web Technologies (Lectures 17 & 18)
 
 ---
@@ -310,8 +311,9 @@ Lab Assignment 06/
 
 ## 🏆 Summary Checklist for Submission
 
-- [x] **Live Deployed Ready:** `vercel.json` and `render.yaml` configured.
+- [x] **Live Deployed Frontend (Vercel):** [https://lab-6-assignment-awt-public.vercel.app/](https://lab-6-assignment-awt-public.vercel.app/)
+- [x] **Live Deployed Backend Ready (Render):** `render.yaml` configured with auto-seed build command.
 - [x] **Cloud Kafka Ready:** Upstash / Aiven config ready in `.env` and `client.js`.
 - [x] **Public GitHub Repo:** Clean commits pushed to [https://github.com/ahsanalich358/Lab-6-Assignment-AWT](https://github.com/ahsanalich358/Lab-6-Assignment-AWT).
 - [x] **README Benchmarking:** Architecture diagram, EXPLAIN ANALYZE outputs, and test accounts documented.
-- [x] **Live Viva:** Interactive web dashboard at `localhost:4000` + terminal viva guide prepared.
+- [x] **Live Viva:** Interactive web dashboard live on Vercel + terminal viva guide prepared.
