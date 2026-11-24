@@ -1,461 +1,317 @@
-# CSC337: Advanced Web Technologies - Lab Assignment 06
-## Multi-Tenant B2B SaaS Platform: Database Performance Tuning, Serverless Cold-Start Analysis & Event-Driven Architecture with Apache Kafka
+# 🚀 CSC337: Advanced Web Technologies - Lab Assignment 06
+## Multi-Tenant B2B SaaS Platform: Database Tuning, Kafka EDA & Serverless Worker
 
-[![Node.js Version](https://img.shields.io/badge/Node.js-v20%2B-green.svg)](https://nodejs.org/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Embedded%20PGlite%20%2F%20pg--pool-blue.svg)](https://github.com/electric-sql/pglite)
-[![Apache Kafka](https://img.shields.io/badge/Apache%20Kafka-KafkaJS%20%2F%20Cloud-red.svg)](https://kafka.apache.org/)
-[![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
+> **GitHub Repository:** [https://github.com/ahsanalich358/Lab-6-Assignment-AWT](https://github.com/ahsanalich358/Lab-6-Assignment-AWT)  
+> **Course:** CSC337 - Advanced Web Technologies (Lectures 17 & 18)
 
 ---
 
-## 🎯 Executive Summary & Objectives
-
-This project is a production-ready **Multi-Tenant B2B SaaS Platform** engineered to solve critical architectural bottlenecks covered in **CSC337 Lectures 17 & 18**:
-1. **Multi-Tenancy & Strict Isolation (Lecture 18):** Implements *Shared Database with Tenant ID (Tenant Context Discriminator)*, resolving tenants via HTTP headers, JWT claims, and subdomains, with automated query-level data boundary enforcement (Tenant A can NEVER access Tenant B data).
-2. **Database Performance Tuning (Lecture 17):** Eliminates classic **N+1 query bottlenecks** using grouped SQL `JOIN` aggregation, optimizes database connection pooling, and benchmarks queries using PostgreSQL `EXPLAIN (ANALYZE, BUFFERS)`.
-3. **Event-Driven Architecture with Apache Kafka (Lecture 18):** Decouples write operations with asynchronous order placement (`HTTP 202 Accepted`), partition key ordering (`tenant_id`), consumer group coordination, and idempotent message deduplication.
-4. **Serverless Async Worker & Cold-Start Analysis (Lecture 17):** Executes background PDF invoice generation via serverless function, profiling container lifecycle latency (**Cold Start: ~1,299ms** vs **Warm Start: ~36ms**).
+## 📌 Table of Contents
+1. [Architecture Overview & Diagram](#-1-architecture-overview--diagram)
+2. [Deployment Guide (Vercel & Render)](#-2-deployment-guide-vercel--render)
+3. [Cloud Kafka Setup (Upstash / Aiven)](#-3-cloud-kafka-setup-upstash--aiven)
+4. [Test Accounts (Tenant A vs Tenant B)](#-4-test-accounts-tenant-a-vs-tenant-b)
+5. [Benchmarking Section](#-5-benchmarking-section)
+   - [N+1 Query Elimination](#a-n1-query-bottleneck-vs-single-join-lecture-17-slide-4)
+   - [PostgreSQL EXPLAIN ANALYZE](#b-postgresql-explain-analyze-before-vs-after-composite-index)
+   - [Serverless Cold-Start Analysis](#c-serverless-worker-cold-start-vs-warm-start-lecture-17-slide-9)
+6. [Live Viva Demonstration Guide](#-6-live-viva-demonstration-guide)
+7. [API Quick Reference & cURL Commands](#-7-api-quick-reference)
 
 ---
 
-## 🏗️ System Architecture & Workflow
+## 🏗️ 1. Architecture Overview & Diagram
+
+The system implements the **Grand Finale Enterprise Blueprint** from Lecture 18 Slide 20:
 
 ```mermaid
-flowchart TD
-    subgraph Clients["Clients & Tenants"]
-        ClientA["Tenant Alpha (alpha.localhost)"]
-        ClientB["Tenant Beta (x-tenant-id: tenant-beta)"]
-    end
+flowchart LR
+    ClientA["🏢 Tenant A (Alpha Retail)"] -->|X-Tenant-ID / Subdomain| Gateway["API Gateway / Tenant Middleware"]
+    ClientB["🚚 Tenant B (Beta Logistics)"] -->|X-Tenant-ID / Subdomain| Gateway
 
-    subgraph Gateway["API & Routing Layer"]
-        MW["Tenant Resolution Middleware\n(Header / JWT / Subdomain)"]
-        OrdersAPI["POST /api/v1/orders\n(Returns 202 Accepted)"]
-        QueryAPI["GET /api/v1/orders\n(Optimized Single JOIN)"]
-    end
+    Gateway -->|HTTP 202 Accepted| KafkaTopic["📦 Kafka Topic: tenant.orders\n(Key: tenant_id)"]
+    Gateway -->|Optimized Single JOIN| DB[(PostgreSQL Database\nConnection Pool: Max 20)]
 
-    subgraph KafkaStream["Apache Kafka Highway (Lecture 18)"]
-        Topic["Topic: tenant.orders"]
-        P0["Partition 0"]
-        P1["Partition 1 (Tenant Beta)"]
-        P2["Partition 2"]
-        P3["Partition 3 (Tenant Alpha)"]
-    end
+    KafkaTopic --> Partition0["Partition 0"]
+    KafkaTopic --> Partition1["Partition 1 (Tenant Beta)"]
+    KafkaTopic --> Partition2["Partition 2"]
+    KafkaTopic --> Partition3["Partition 3 (Tenant Alpha)"]
 
-    subgraph Workers["Consumer & Async Workers"]
-        Consumer["Kafka Consumer Group\n(order-processing-group)"]
-        Idempotent["Idempotency Filter\n(ON CONFLICT DO NOTHING)"]
-        ServerlessWorker["Serverless PDF Worker\n(Cold Start Telemetry)"]
-    end
+    Partition1 --> ConsumerGroup["⚙️ Consumer Group\n(order-processing-group)"]
+    Partition3 --> ConsumerGroup
 
-    subgraph Database["Polyglot / Multi-Tenant DB (PostgreSQL)"]
-        Pool["Connection Pool Manager\n(Max: 20, Queue Manager)"]
-        OrdersTable["orders (Scoped WHERE tenant_id = ?)"]
-        Index["idx_orders_tenant_created\n(tenant_id, created_at DESC)"]
-        EventsTable["processed_events (Offset Tracking)"]
-        InvoiceStorage["Generated PDF Invoices (/data/invoices)"]
-    end
-
-    ClientA --> MW
-    ClientB --> MW
-    MW --> OrdersAPI
-    MW --> QueryAPI
-    OrdersAPI -->|Immediate 202 Token| ClientA
-    OrdersAPI -->|Produce with Key: tenant_id| Topic
-    Topic --> P1
-    Topic --> P3
-    P1 --> Consumer
-    P3 --> Consumer
-    Consumer --> Idempotent
-    Idempotent -->|Update Inventory| OrdersTable
-    Idempotent -->|Trigger Async| ServerlessWorker
-    ServerlessWorker -->|Persist PDF & Latency| InvoiceStorage
-    QueryAPI --> Pool
-    Pool --> Index --> OrdersTable
+    ConsumerGroup -->|1. Idempotency Check| DB
+    ConsumerGroup -->|2. Deduct Inventory| DB
+    ConsumerGroup -->|3. Trigger Async Task| ServerlessWorker["⚡ Serverless PDF Worker\n(Tax Invoice Generator)"]
+    ServerlessWorker --> Storage[("📄 PDF Invoices\n(/data/invoices)")]
 ```
+
+### Core Architecture Pillars:
+1. **Multi-Tenancy (Lecture 18):** Shared Database with Tenant ID (`tenant_id`). Tenant A can **NEVER** see Tenant B's data (Violations = 0 marks).
+2. **Database Performance Tuning (Lecture 17):** Eliminates the N+1 problem using grouped SQL `JOIN`s + Connection Pooling + Composite Indexing on `[tenant_id, created_at]`.
+3. **Event-Driven Asynchrony (Lecture 18):** When placing an order, API returns `202 Accepted` immediately and sends the event to Kafka. Key-based partitioning guarantees FIFO ordering per tenant.
+4. **Serverless Worker (Lecture 17):** Background PDF invoice generator with Cold-Start (~1,299ms) vs Warm-Start (~36ms) analysis.
 
 ---
 
-## 🚀 Live Deployment & Cloud Infrastructure
+## 🌐 2. Deployment Guide (Vercel & Render)
 
-### 1. Deployment on Render (Recommended)
-1. Fork or push this repository to your GitHub account: `https://github.com/ahsanalich358/Lab-6-Assignment-AWT`
-2. Go to [Render Dashboard](https://dashboard.render.com/) $\rightarrow$ Click **New +** $\rightarrow$ **Web Service**.
-3. Select your repository `Lab-6-Assignment-AWT`.
-4. Render will auto-detect settings from `render.yaml`:
-   - **Environment**: Node
-   - **Build Command**: `npm install`
-   - **Start Command**: `npm start`
-   - **Health Check Path**: `/health`
-5. Click **Deploy Web Service**. Your live backend and interactive frontend will be live at `https://<your-app>.onrender.com`.
+### Option A: Deploy on Render (Recommended for Web Service + Background Kafka)
+1. Go to [Render Dashboard](https://dashboard.render.com/) $\rightarrow$ Click **New +** $\rightarrow$ **Web Service**.
+2. Connect your GitHub repository: `https://github.com/ahsanalich358/Lab-6-Assignment-AWT`
+3. Render automatically reads our `render.yaml`:
+   - **Environment:** `Node`
+   - **Build Command:** `npm install`
+   - **Start Command:** `npm start`
+   - **Health Check Path:** `/health`
+4. Click **Create Web Service**. Both your Backend and Interactive Frontend will be live!
 
-### 2. Deployment on Vercel
-1. Import repository in [Vercel](https://vercel.com/new).
-2. The bundled `vercel.json` and `api/index.js` automatically expose the entire API and Frontend as Serverless Edge Functions.
+### Option B: Deploy on Vercel
+1. Import repository on [Vercel](https://vercel.com/new).
+2. Vercel automatically detects `vercel.json` and `api/index.js` (Serverless Edge Function).
 3. Click **Deploy**.
 
-### 3. Cloud Kafka Setup (Upstash / Aiven)
-The application seamlessly switches between embedded high-performance event broker and Cloud Kafka:
-1. Create a free Kafka cluster on [Upstash Kafka](https://upstash.com/) or [Aiven](https://aiven.io/).
-2. Create topic `tenant.orders` with 4 partitions.
-3. In your `.env` or Render/Vercel Environment Variables, set:
+---
+
+## ☁️ 3. Cloud Kafka Setup (Upstash / Aiven)
+
+By default, the platform runs an embedded high-throughput event engine out of the box with zero external setup needed. To connect to Cloud Kafka (Upstash or Aiven):
+
+1. Go to [Upstash Kafka](https://console.upstash.com/kafka) or [Aiven](https://aiven.io/) and create a free Kafka cluster.
+2. Create a topic named: `tenant.orders` with **4 partitions**.
+3. In your `.env` (or Render/Vercel Environment Variables), add:
    ```env
    KAFKA_BROKERS=your-cluster-url.upstash.io:9092
    KAFKA_USERNAME=your-username
    KAFKA_PASSWORD=your-password
    KAFKA_SASL=true
    KAFKA_SSL=true
+   KAFKA_TOPIC_ORDERS=tenant.orders
    ```
+4. The system automatically switches to SASL/SCRAM cloud mode!
 
 ---
 
-## 👥 Test Accounts for Distinct Tenants
+## 👥 4. Test Accounts (Tenant A vs Tenant B)
 
-| Tenant Name | Tenant ID (`X-Tenant-ID`) | Subdomain | Role | Test User Email | Product Catalog Sample |
-|:---|:---|:---|:---|:---|:---|
-| **Tenant A (Alpha Retail)** | `tenant-alpha` | `alpha.localhost` | Enterprise Retailer | `admin@alpha.com` | `prod-alpha-101` (Cloud Server: $850.00)<br>`prod-alpha-102` (NVMe Storage: $320.00) |
-| **Tenant B (Beta Logistics)** | `tenant-beta` | `beta.localhost` | Global Logistics | `admin@beta.com` | `prod-beta-201` (GPS Tracking: $120.00)<br>`prod-beta-202` (Telemetry Sensor: $85.00) |
+Use these accounts to test strict multi-tenant boundary isolation:
+
+| Field | 🏢 Tenant A (Alpha Retail) | 🚚 Tenant B (Beta Logistics) |
+|:---|:---|:---|
+| **Tenant ID (`X-Tenant-ID`)** | `tenant-alpha` | `tenant-beta` |
+| **Subdomain** | `alpha.localhost` | `beta.localhost` |
+| **Role / Plan** | Enterprise (`enterprise`) | Professional (`pro`) |
+| **Admin User** | `admin@alpha.com` | `admin@beta.com` |
+| **Sample Products** | • `prod-alpha-101`: Enterprise Cloud Server ($850)<br>• `prod-alpha-102`: NVMe Storage Array ($320)<br>• `prod-alpha-103`: Managed K8s Node ($450) | • `prod-beta-201`: GPS Fleet Tracking Unit ($120)<br>• `prod-beta-202`: Telemetry Sensor ($85)<br>• `prod-beta-203`: Automated Dispatch Tablet ($290) |
 
 ---
 
-## 🎓 Live Viva Demonstration Checklist
+## 📊 5. Benchmarking Section
 
-Be fully prepared to demonstrate each concept live in front of your instructor:
+### A. N+1 Query Bottleneck vs Single JOIN (Lecture 17 Slide 4)
+> *"100 orders ke liye Foodpanda rider 100 dafa restaurant nahi jata! Single grouped trip saves the database."*
 
-### 1. Trigger Kafka Events Live (HTTP 202 Accepted)
-Run in terminal:
+```text
+========================================================================================
+Batch Size   Unoptimized Queries   N+1 Latency   Optimized Queries   Single JOIN Latency   Speedup
+========================================================================================
+10 Orders    11 queries            247.2 ms      1 query             179.3 ms              1.4x
+50 Orders    51 queries            718.3 ms      1 query              95.6 ms              7.5x
+100 Orders   101 queries         1,107.9 ms      1 query             119.4 ms              9.3x (99% query drop)
+========================================================================================
+```
+
+- **Unoptimized Code (`/api/v1/orders/unoptimized`):** 1 query for orders + 100 separate queries in a loop for items = 101 database round-trips.
+- **Optimized Code (`/api/v1/orders/optimized`):** 1 single query using `LEFT JOIN` and PostgreSQL `json_agg()`.
+
+---
+
+### B. PostgreSQL EXPLAIN ANALYZE: Before vs After Composite Index
+> *"EXPLAIN aur ANALYZE database ka X-Ray hain (Lecture 17 Slide 3)."*
+
+**Target Query:**
+```sql
+SELECT id, customer_name, total_amount, created_at 
+FROM orders 
+WHERE tenant_id = 'tenant-alpha' 
+ORDER BY created_at DESC;
+```
+
+#### Results Comparison Table:
+
+| Metric | Before Index (Unindexed Table) | After Composite Index `(tenant_id, created_at DESC)` | Impact |
+|:---|:---|:---|:---|
+| **Query Plan Node** | `Sort` over `Seq Scan on orders` | `Bitmap Index Scan` on `idx_orders_tenant_created` | Direct B-Tree Index Scan |
+| **Planner Estimated Cost** | `10,000,000,113.46` | **47.23** | **>99.999% Cost Drop** |
+| **Planning Time** | 5.95 ms | **2.36 ms** | **60% faster planning** |
+| **Execution Time** | 24.86 ms | **16.08 ms** | **1.62x faster execution** |
+
+---
+
+### C. Serverless Worker: Cold Start vs Warm Start (Lecture 17 Slide 9)
+> *"WAPDA ki light jane par generator on hone mein thora time lagta hai. Cold start initial container boot latency hai."*
+
+```text
+┌─────────┬────────────┬─────────────────┬──────────────────┬─────────────┬────────────────┐
+│ Invocation │ State      │ Container ID    │ Init Time (ms)   │ Exec Time   │ Total Latency  │
+├─────────┼────────────┼─────────────────┼──────────────────┼─────────────┼────────────────┤
+│ #1      │ COLD START ❄️│ lambda_nvj0mqlv │ 1,226.20 ms      │ 73.73 ms    │ 1,299.94 ms    │
+│ #2      │ WARM START 🔥│ lambda_nvj0mqlv │ 0.00 ms          │ 40.82 ms    │ 40.83 ms       │
+│ #3      │ WARM START 🔥│ lambda_nvj0mqlv │ 0.00 ms          │ 45.33 ms    │ 45.34 ms       │
+│ #4      │ WARM START 🔥│ lambda_nvj0mqlv │ 0.00 ms          │ 39.13 ms    │ 39.16 ms       │
+│ #5      │ WARM START 🔥│ lambda_nvj0mqlv │ 0.00 ms          │ 19.71 ms    │ 19.71 ms       │
+└─────────┴────────────┴─────────────────┴──────────────────┴─────────────┴────────────────┘
+```
+- **Cold Start Penalty:** The cold invocation is **35.9x slower** than warm invocations due to container spin-up and Node.js/PDFKit runtime initialization.
+
+---
+
+## 🎯 6. Live Viva Demonstration Guide
+
+During your viva with the instructor, follow this step-by-step checklist:
+
+### Step 1: Start Server & Open Interactive Dashboard
+```bash
+npm start
+```
+Open **`http://localhost:4000`** in browser. You will see the live control panel with:
+- Tenant Switcher (`tenant-alpha` vs `tenant-beta`)
+- Live Connection Pool Telemetry
+- Kafka Event Stream & Order Placement
+- Live Benchmark buttons!
+
+### Step 2: Trigger Kafka Event Live (Immediate HTTP 202 Accepted)
+Run this command in a new terminal:
 ```bash
 curl -X POST http://localhost:4000/api/v1/orders \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: tenant-alpha" \
-  -d '{"customer_name":"Live Viva Student","customer_email":"student@live.pk","items":[{"product_id":"prod-alpha-101","quantity":1}]}'
+  -d '{"customer_name":"Ali Raza","customer_email":"ali@customer.pk","items":[{"product_id":"prod-alpha-101","quantity":1}]}'
 ```
-*Expected*: Terminal receives immediate `202 Accepted` in `< 5ms` with `event_id` and `partition_key: tenant-alpha`.
+**Show to Instructor:**
+- The API responds in **< 5ms** with `HTTP 202 ACCEPTED`.
+- In the server terminal, point out the consumer log:
+  ```text
+  [KafkaConsumerGroup] Received event | Topic: tenant.orders | Partition: 3 | Offset: 1
+  [KafkaConsumerGroup] Serverless Invoice generated: INV-ORD_... | ColdStart: false
+  [KafkaConsumerGroup] SUCCESS: Offset committed | Partition: 3 | Offset: 1 | Status: COMPLETED
+  ```
 
-### 2. Monitor Consumer Terminal Offsets Live
-In the server terminal window, observe:
-```text
-[KafkaConsumerGroup] Received event | Topic: tenant.orders | Partition: 3 | Offset: 1 | Tenant: tenant-alpha
-[KafkaConsumerGroup] Serverless Invoice generated: INV-ORD_... | ColdStart: false | Latency: 38ms
-[KafkaConsumerGroup] SUCCESS: Offset committed | Partition: 3 | Offset: 1 | Order: ord_... | Status: COMPLETED
-```
-Explain: *"Topic highway hai, partition uski lanes hain, aur offset gaari ka mile-marker hai (Slide 12)."*
-
-### 3. Run Live EXPLAIN ANALYZE
-Execute live in terminal:
+### Step 3: Run EXPLAIN ANALYZE in front of Instructor
+Run:
 ```bash
 npm run benchmark:explain
 ```
-Point out to the instructor:
-- **Before Index**: `Seq Scan on orders` scanning 2,400+ rows, cost in the billions, execution time ~25ms.
-- **After Index**: `Bitmap Index Scan using idx_orders_tenant_created` on `(tenant_id, created_at DESC)`, planner cost drops to 47, execution time drops to ~16ms.
+**Explain to Instructor:**
+- *"Before index: PostgreSQL conducts a full Sequential Scan across 2,400+ rows with an astronomical planner cost."*
+- *"After index: Adding composite index `idx_orders_tenant_created (tenant_id, created_at DESC)` changes the plan to a Bitmap Index Scan, reducing cost to 47.23 and speeding up query execution."*
 
-### 4. Prove Strict Tenant Boundary (0 Marks Rule)
-Execute live:
+### Step 4: Prove Zero-Leak Tenant Boundary (14 Tests)
+Run:
 ```bash
 npm run test:isolation
 ```
-Show the 14 passing security tests verifying that Tenant Alpha cannot query Tenant Beta's orders or products, returning `403 Forbidden` (`CROSS_TENANT_VIOLATION`).
+**Explain to Instructor:**
+- *"Tenant A cannot query Tenant B orders or products. Attempting cross-tenant tampering triggers HTTP 403 Forbidden (`CROSS_TENANT_VIOLATION`), satisfying the 0-marks boundary requirement."*
 
----
-
-## 🚀 Quick Start Guide
-
-### 1. Prerequisites
-- **Node.js**: v20+ or v24+
-- **npm**: v10+
-
-### 2. Installation
-```bash
-git clone <repo-url>
-cd "Lab Assignment 06"
-npm install
-```
-
-### 3. Environment Setup
-A preconfigured `.env` is already provided. To customize:
-```bash
-cp .env.example .env
-```
-*(By default, embedded high-performance PostgreSQL via PGlite and the Kafka event engine operate out of the box with zero external daemon configuration required!)*
-
-### 4. Seed Database & Run All Verification Benchmarks
-Execute the complete master test and benchmark harness with a single command:
+### Step 5: Run Full Benchmark Suite (All 6 Steps)
 ```bash
 npm run test:all
 ```
-This runs:
-1. `scripts/seed-db.js`: Seeds 3 enterprise tenants, product catalogs, and **2,400 orders with 3,600 order items**.
-2. `tests/tenant-isolation.test.js`: Validates 100% tenant boundary isolation (zero cross-tenant leaks).
-3. `tests/kafka-pipeline.test.js`: Validates 202 Accepted, key partitioning, consumer offset commits, and idempotent deduplication.
-4. `scripts/benchmark-nplusone.js`: Compares N+1 unoptimized query vs single JOIN.
-5. `scripts/benchmark-explain.js`: Runs `EXPLAIN ANALYZE` before and after composite indexing.
-6. `scripts/benchmark-coldstart.js`: Measures cold start vs warm start latency for serverless invoice generation.
-
-### 5. Start the Live HTTP Server
-```bash
-npm start
-```
-Server starts on `http://localhost:4000`.
 
 ---
 
-## 📊 Technical Requirements & Benchmarks
+## 📡 7. API Quick Reference
 
-### 1. Multi-Tenant Architecture & Data Boundary Enforcement
-- **Isolation Model**: *Shared Database with Tenant ID (Tenant Context Discriminator)*.
-- **Tenant Extraction Hierarchy**:
-  1. `X-Tenant-ID` header (e.g. `tenant-alpha`)
-  2. `Authorization: Bearer <jwt>` (`tenant_id` claim)
-  3. Host Subdomain (e.g. `alpha.localhost` or `beta.saas.local`)
-- **Verification Result**:
-  ```text
-  [Test 1] Missing Tenant Identification: 400 Bad Request ✅
-  [Test 2] Tenant Alpha Scoped Query: 100% Alpha orders, 0 cross-tenant leaks ✅
-  [Test 3] Tenant Beta Scoped Query: 100% Beta orders, 0 cross-tenant leaks ✅
-  [Test 4] Direct Cross-Tenant Tampering: 403 Forbidden (CROSS_TENANT_VIOLATION) ✅
-  [Test 5] Cross-Tenant Product Ordering: 400 Bad Request ✅
-  [Test 6] Subdomain Extraction (alpha.localhost): 200 OK scoped to tenant-alpha ✅
-  ```
-
----
-
-### 2. Database Tuning: N+1 Resolution Benchmark
-As highlighted in Lecture 17 Slide 4:
-> *"100 orders ke liye Foodpanda rider 100 dafa restaurant nahi jata! Code mein array map ke andar query likhna (N+1) sab se bari bewakoofi hai."*
-
-#### Benchmark Comparison:
-
-| Batch Size | Unoptimized N+1 Queries | N+1 Latency | Optimized Single JOIN | Single JOIN Latency | Query Reduction | Speedup |
-|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **10 Orders** | 11 queries | **247.2 ms** | **1 query** | **179.3 ms** | **90.9%** | **1.4x** |
-| **50 Orders** | 51 queries | **718.3 ms** | **1 query** | **95.6 ms** | **98.0%** | **7.5x** |
-| **100 Orders** | 101 queries | **1,107.9 ms** | **1 query** | **119.4 ms** | **99.0%** | **9.3x** |
-
-**Resolution Strategy**:
-Instead of executing an outer query followed by N child queries in a loop, the optimized endpoint performs a single query using `LEFT JOIN` and PostgreSQL `json_agg()`:
-```sql
-SELECT 
-  o.id, o.tenant_id, o.customer_name, o.total_amount, o.status, o.created_at,
-  COALESCE(
-    json_agg(
-      json_build_object(
-        'id', oi.id, 'product_id', oi.product_id,
-        'product_name', oi.product_name, 'quantity', oi.quantity,
-        'unit_price', oi.unit_price, 'subtotal', oi.subtotal
-      )
-    ) FILTER (WHERE oi.id IS NOT NULL), '[]'::json
-  ) AS items
-FROM orders o
-LEFT JOIN order_items oi ON o.id = oi.order_id AND oi.tenant_id = o.tenant_id
-WHERE o.tenant_id = $1
-GROUP BY o.id
-ORDER BY o.created_at DESC
-LIMIT $2;
-```
-
----
-
-### 3. PostgreSQL EXPLAIN ANALYZE: Before vs After Composite Index
-
-#### Benchmark Target Query:
-```sql
-SELECT id, customer_name, total_amount, created_at
-FROM orders
-WHERE tenant_id = 'tenant-alpha'
-ORDER BY created_at DESC;
-```
-
-#### Execution Plan Comparison:
-
-| Metric | Before Index (Unindexed) | After Composite Index `(tenant_id, created_at DESC)` | Impact |
-|:---|:---|:---|:---|
-| **Scan Node Type** | `Sort` + `Seq Scan on orders` | `Bitmap Index Scan` + `Bitmap Heap Scan` | Direct B-Tree Navigation |
-| **Index Used** | *None (Full Table Scan)* | `idx_orders_tenant_created` | Selective Row Lookup |
-| **Estimated Startup Cost**| `10,000,000,113.42` | **4.43** | **>99.99% Cost Drop** |
-| **Estimated Total Cost**  | `10,000,000,113.46` | **47.23** | **>99.99% Cost Drop** |
-| **Planning Time** | 5.95 ms | **2.36 ms** | **60% faster** |
-| **Execution Time** | 24.86 ms | **16.08 ms** | **1.6x faster** |
-
-#### Raw Plan Snippet (Before Index - Sequential Scan):
-```json
-{
-  "Node Type": "Sort",
-  "Sort Key": ["created_at DESC"],
-  "Plans": [
-    {
-      "Node Type": "Seq Scan",
-      "Relation Name": "orders",
-      "Filter": "((tenant_id)::text = 'tenant-alpha'::text)"
-    }
-  ],
-  "Execution Time": 24.864
-}
-```
-
-#### Raw Plan Snippet (After Index - Composite B-Tree Index Scan):
-```json
-{
-  "Node Type": "Sort",
-  "Plans": [
-    {
-      "Node Type": "Bitmap Heap Scan",
-      "Relation Name": "orders",
-      "Plans": [
-        {
-          "Node Type": "Bitmap Index Scan",
-          "Index Name": "idx_orders_tenant_created",
-          "Index Cond": "((tenant_id)::text = 'tenant-alpha'::text)"
-        }
-      ]
-    }
-  ],
-  "Execution Time": 16.077
-}
-```
-
----
-
-### 4. Event-Driven Architecture with Apache Kafka
-- **Decoupled Asynchrony**: `POST /api/v1/orders` responds with `202 Accepted` in `< 5ms`.
-- **Partition Key**: `tenant_id` is assigned as the Kafka Message Key. In Kafka, messages with the same key deterministically hash to the same partition, guaranteeing strict FIFO order per tenant (Lecture 18 Slide 12).
-- **Consumer Group**: `order-processing-group` consumes events, deducts tenant inventory, triggers invoice generation, and updates order status to `COMPLETED`.
-- **At-Least-Once Delivery & Idempotency** (Lecture 18 Slide 13):
-  The consumer records event offsets in `processed_events`. Redelivery of duplicate events is intercepted via `ON CONFLICT DO NOTHING`, preventing double inventory deduction or duplicate invoicing.
-
----
-
-### 5. Serverless Worker & Cold-Start Analysis
-Implemented in `src/serverless/invoice-worker.js` (AWS Lambda & Vercel compatible). Generates real PDF invoices using PDFKit.
-
-#### Cold vs Warm Start Latency Results:
-
-| Invocation # | Lifecycle State | Container ID | Init Time (ms) | Exec Time (ms) | Total Latency (ms) |
-|:---:|:---:|:---:|:---:|:---:|:---:|
-| **#1** | **COLD START ❄️** | `lambda_nvj0mqlv` | **1,226.20 ms** | 73.73 ms | **1,299.94 ms** |
-| **#2** | **WARM START 🔥** | `lambda_nvj0mqlv` | 0.00 ms | 40.82 ms | **40.83 ms** |
-| **#3** | **WARM START 🔥** | `lambda_nvj0mqlv` | 0.00 ms | 45.33 ms | **45.34 ms** |
-| **#4** | **WARM START 🔥** | `lambda_nvj0mqlv` | 0.00 ms | 39.13 ms | **39.16 ms** |
-| **#5** | **WARM START 🔥** | `lambda_nvj0mqlv` | 0.00 ms | 19.71 ms | **19.71 ms** |
-
-**Key Takeaways**:
-- **Cold Start Penalty**: The initial cold invocation is **35.9x slower** than subsequent warm invocations.
-- **Architectural Trade-Off** (Lecture 17 Slide 9):
-  Serverless is exceptionally cost-effective and elastic for asynchronous background tasks (such as PDF generation, billing, and email dispatch). However, the initial cold start latency makes raw serverless unsuitable for real-time, ultra-low-latency workloads like high-frequency trading or multiplayer gaming without provisioned concurrency.
-
----
-
-## 📡 API Reference & Verification cURL Commands
-
-### 1. Place Asynchronous Order (HTTP 202 Accepted)
+### Place Asynchronous Order (202 Accepted):
 ```bash
 curl -X POST http://localhost:4000/api/v1/orders \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: tenant-alpha" \
   -d '{
-    "customer_name": "Hamza Tariq",
-    "customer_email": "hamza.tariq@cloud.pk",
-    "items": [
-      { "product_id": "prod-alpha-101", "quantity": 1 }
-    ]
+    "customer_name": "Fatima Zahra",
+    "customer_email": "fatima@domain.pk",
+    "items": [{ "product_id": "prod-alpha-101", "quantity": 1 }]
   }'
 ```
-**Response**:
-```json
-{
-  "status": "ACCEPTED",
-  "message": "Order accepted and dispatched to Apache Kafka for asynchronous processing.",
-  "order_id": "ord_8b459d2a1f",
-  "tenant_id": "tenant-alpha",
-  "total_amount": 850.00,
-  "kafka": {
-    "topic": "tenant.orders",
-    "partition_key": "tenant-alpha",
-    "event_id": "evt_d39a1f2b-..."
-  }
-}
-```
 
-### 2. Fetch Orders (Optimized Single JOIN)
+### Fetch Orders (Optimized Single JOIN):
 ```bash
 curl -H "X-Tenant-ID: tenant-alpha" http://localhost:4000/api/v1/orders/optimized?limit=10
 ```
 
-### 3. Fetch Orders (Unoptimized N+1 Benchmark)
+### Fetch Orders (Unoptimized N+1):
 ```bash
 curl -H "X-Tenant-ID: tenant-alpha" http://localhost:4000/api/v1/orders/unoptimized?limit=10
 ```
 
-### 4. Run Live EXPLAIN ANALYZE
-```bash
-curl -H "X-Tenant-ID: tenant-alpha" http://localhost:4000/api/v1/explain/analyze
-```
-
-### 5. Inspect Connection Pool Telemetry
+### Inspect Connection Pool Telemetry:
 ```bash
 curl -H "X-Tenant-ID: tenant-alpha" http://localhost:4000/api/v1/analytics/pool-status
 ```
 
-### 6. Inspect Kafka Highway & Partitions
+### Inspect Kafka Topic & Partition Offsets:
 ```bash
 curl -H "X-Tenant-ID: tenant-alpha" http://localhost:4000/api/v1/analytics/kafka-status
 ```
 
-### 7. Inspect Serverless Invoice Telemetry
-```bash
-curl -H "X-Tenant-ID: tenant-alpha" http://localhost:4000/api/v1/analytics/invoices
-```
-
 ---
 
-## 📁 Repository Structure
+## 📁 Project Structure
 
 ```text
 Lab Assignment 06/
-├── .env.example                     # Environment template (PostgreSQL, Kafka, Pool)
+├── .env.example                     # Environment variables template
 ├── .env                             # Active environment configuration
-├── package.json                     # Project scripts and dependencies
-├── README.md                        # Primary technical documentation & benchmarks
-├── PROJECT_REPORT.md                # Comprehensive architectural report (Lec 17-18)
-├── data/
-│   ├── pgdata/                      # Embedded PostgreSQL database files
-│   └── invoices/                    # Generated PDF tax invoices
+├── package.json                     # Scripts & dependencies
+├── render.yaml                      # Render cloud infrastructure blueprint
+├── vercel.json                      # Vercel serverless deployment config
+├── README.md                        # Easy-to-read student & viva documentation
+├── PROJECT_REPORT.md                # In-depth architectural report (Lec 17 & 18)
+├── public/
+│   └── index.html                   # Interactive live viva Frontend Dashboard
+├── api/
+│   └── index.js                     # Vercel serverless entry point
 ├── scripts/
-│   ├── seed-db.js                   # Seeds tenants, products & 2,400 realistic orders
-│   ├── benchmark-nplusone.js        # N+1 query vs single JOIN benchmark
-│   ├── benchmark-explain.js         # EXPLAIN ANALYZE before & after composite index
+│   ├── seed-db.js                   # Seeds 2,400 orders across tenants
+│   ├── benchmark-nplusone.js        # N+1 vs Single JOIN benchmark
+│   ├── benchmark-explain.js         # EXPLAIN ANALYZE comparison runner
 │   ├── benchmark-coldstart.js       # Serverless Cold vs Warm latency profiler
-│   └── run-all-benchmarks.js        # Master automated benchmark test harness
+│   └── run-all-benchmarks.js        # One-click master test runner
 ├── src/
-│   ├── app.js                       # Express app configuration & middleware pipeline
-│   ├── server.js                    # HTTP server & graceful shutdown lifecycle
-│   ├── config/index.js              # Environment settings & pool configuration
+│   ├── server.js                    # Server startup & lifecycle
+│   ├── app.js                       # Express configuration & static file serving
+│   ├── config/index.js              # Environment settings
 │   ├── db/
-│   │   ├── connection.js            # Connection Pool Manager (max, queue, idle timeout)
-│   │   └── schema.sql               # PostgreSQL schema DDL with foreign keys & indexes
+│   │   ├── connection.js            # Connection Pool Manager (max, queue)
+│   │   └── schema.sql               # PostgreSQL tables, foreign keys & indexes
 │   ├── kafka/
-│   │   ├── client.js                # Dual-engine Kafka client (Cloud / High-fidelity Broker)
-│   │   ├── producer.js              # Partitioned Order Producer (key: tenant_id)
-│   │   └── consumer.js              # Consumer Group with offset commit & idempotency
+│   │   ├── client.js                # KafkaJS / Embedded high-throughput broker
+│   │   ├── producer.js              # Order Producer (key: tenant_id)
+│   │   └── consumer.js              # Consumer Group (idempotent offset commit)
 │   ├── middleware/
 │   │   ├── auth.middleware.js       # JWT claim verification
-│   │   └── tenant.middleware.js     # Header/JWT/Subdomain tenant resolution
+│   │   └── tenant.middleware.js     # Header, subdomain & JWT tenant resolution
 │   ├── routes/
+│   │   ├── order.routes.js          # POST /orders (202 Accepted), GET /orders
+│   │   ├── explain.routes.js        # GET /explain/analyze
 │   │   ├── analytics.routes.js      # Pool & Kafka status endpoints
-│   │   ├── explain.routes.js        # Live EXPLAIN ANALYZE comparison endpoint
-│   │   ├── order.routes.js          # POST /orders (202 Accepted) & GET /orders
 │   │   └── tenant.routes.js         # Tenant registry & token issuance
 │   ├── serverless/
-│   │   └── invoice-worker.js        # Serverless PDF generator with Cold-Start telemetry
+│   │   └── invoice-worker.js        # PDF invoice worker with cold-start telemetry
 │   └── services/
-│       └── order.service.js         # N+1 and Single-JOIN query implementations
+│       └── order.service.js         # Query implementations (N+1 vs JOIN)
 └── tests/
-    ├── tenant-isolation.test.js     # Strict tenant isolation boundary test suite
-    └── kafka-pipeline.test.js       # Kafka 202 Accepted & idempotent consumer test suite
+    ├── tenant-isolation.test.js     # 14/14 passed strict boundary tests
+    └── kafka-pipeline.test.js       # 10/10 passed Kafka & idempotency tests
 ```
 
 ---
 
-## 👥 Authors & Academic Attribution
-- **Course**: CSC337 - Advanced Web Technologies
-- **Assignment**: Lab Assignment 06
-- **Topics Covered**: Database Performance Tuning, Serverless, Event-Driven Architecture with Kafka & Multi-Tenant SaaS (Lectures 17 & 18).
+## 🏆 Summary Checklist for Submission
+
+- [x] **Live Deployed Ready:** `vercel.json` and `render.yaml` configured.
+- [x] **Cloud Kafka Ready:** Upstash / Aiven config ready in `.env` and `client.js`.
+- [x] **Public GitHub Repo:** Clean commits pushed to [https://github.com/ahsanalich358/Lab-6-Assignment-AWT](https://github.com/ahsanalich358/Lab-6-Assignment-AWT).
+- [x] **README Benchmarking:** Architecture diagram, EXPLAIN ANALYZE outputs, and test accounts documented.
+- [x] **Live Viva:** Interactive web dashboard at `localhost:4000` + terminal viva guide prepared.
