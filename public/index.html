@@ -27,18 +27,23 @@
       </div>
 
       <!-- Tenant Switcher & Status -->
-      <div class="flex items-center space-x-4">
+      <div class="flex items-center space-x-3">
+        <div class="hidden md:flex items-center space-x-2 bg-slate-800/80 border border-slate-700 px-2.5 py-1 rounded-lg text-xs">
+          <i class="fa-solid fa-server text-slate-400"></i>
+          <input type="text" id="apiBaseInput" placeholder="Backend URL (e.g. https://saas.onrender.com)" onchange="updateApiBaseUrl()" class="bg-transparent text-slate-200 text-xs w-48 focus:outline-none placeholder-slate-500 font-mono">
+        </div>
+
         <div class="flex items-center space-x-2 bg-slate-800/80 border border-slate-700 px-3 py-1.5 rounded-lg text-xs">
-          <span class="text-slate-400 font-medium">Active Tenant:</span>
+          <span class="text-slate-400 font-medium">Tenant:</span>
           <select id="tenantSelect" onchange="switchTenant()" class="bg-transparent text-indigo-300 font-bold focus:outline-none cursor-pointer">
-            <option value="tenant-alpha" class="bg-slate-900 text-white">🏢 Tenant A (Alpha Retail)</option>
-            <option value="tenant-beta" class="bg-slate-900 text-white">🚚 Tenant B (Beta Logistics)</option>
+            <option value="tenant-alpha" class="bg-slate-900 text-white">🏢 Tenant A (Alpha)</option>
+            <option value="tenant-beta" class="bg-slate-900 text-white">🚚 Tenant B (Beta)</option>
           </select>
         </div>
 
-        <div class="flex items-center space-x-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-3 py-1.5 rounded-lg text-xs font-semibold">
+        <div class="flex items-center space-x-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-2.5 py-1.5 rounded-lg text-xs font-semibold">
           <span class="w-2 h-2 rounded-full bg-emerald-400 pulse-fast"></span>
-          <span>Engine Online</span>
+          <span id="engineStatusLabel">Online</span>
         </div>
       </div>
     </div>
@@ -311,6 +316,42 @@
   <!-- Frontend Logic -->
   <script>
     let activeTenantId = 'tenant-alpha';
+    let apiBaseUrl = localStorage.getItem('saas_api_base_url') || '';
+
+    const apiInput = document.getElementById('apiBaseInput');
+    if (apiInput && apiBaseUrl) {
+      apiInput.value = apiBaseUrl;
+    }
+
+    function updateApiBaseUrl() {
+      const input = document.getElementById('apiBaseInput');
+      apiBaseUrl = input.value.trim().replace(/\/+$/, '');
+      localStorage.setItem('saas_api_base_url', apiBaseUrl);
+      console.log('API Base URL set to:', apiBaseUrl || '(local host)');
+      checkEngineStatus();
+    }
+
+    function apiUrl(path) {
+      return apiBaseUrl ? `${apiBaseUrl}${path}` : path;
+    }
+
+    async function checkEngineStatus() {
+      const label = document.getElementById('engineStatusLabel');
+      try {
+        const res = await fetch(apiUrl('/health'));
+        if (res.ok) {
+          label.textContent = 'Backend Online';
+          label.parentElement.classList.remove('bg-rose-500/10', 'text-rose-400', 'border-rose-500/30');
+          label.parentElement.classList.add('bg-emerald-500/10', 'text-emerald-400', 'border-emerald-500/30');
+        } else {
+          throw new Error('Not OK');
+        }
+      } catch (e) {
+        label.textContent = 'Backend Offline';
+        label.parentElement.classList.remove('bg-emerald-500/10', 'text-emerald-400', 'border-emerald-500/30');
+        label.parentElement.classList.add('bg-rose-500/10', 'text-rose-400', 'border-rose-500/30');
+      }
+    }
 
     const tenantCatalogs = {
       'tenant-alpha': [
@@ -362,7 +403,7 @@
 
       const start = performance.now();
       try {
-        const res = await fetch('/api/v1/orders', {
+        const res = await fetch(apiUrl('/api/v1/orders'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -392,7 +433,7 @@
       const box = document.getElementById('isolationResultBox');
       box.innerHTML = '<span class="text-slate-400"><i class="fa-solid fa-spinner fa-spin"></i> Fetching orders for ' + activeTenantId + '...</span>';
       try {
-        const res = await fetch('/api/v1/orders?limit=5', {
+        const res = await fetch(apiUrl('/api/v1/orders?limit=5'), {
           headers: { 'X-Tenant-ID': activeTenantId }
         });
         const data = await res.json();
@@ -415,7 +456,7 @@
       try {
         // Attempt to order a product belonging to the OTHER tenant
         const foreignProduct = targetTenant === 'tenant-beta' ? 'prod-beta-201' : 'prod-alpha-101';
-        const res = await fetch('/api/v1/orders', {
+        const res = await fetch(apiUrl('/api/v1/orders'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -449,7 +490,7 @@
       const endpoint = optimized ? '/api/v1/orders/optimized?limit=50' : '/api/v1/orders/unoptimized?limit=50';
       box.innerHTML = `<span class="text-slate-400"><i class="fa-solid fa-spinner fa-spin"></i> Running ${optimized ? 'Single Grouped JOIN' : 'Unoptimized N+1 Query'}...</span>`;
       try {
-        const res = await fetch(endpoint, {
+        const res = await fetch(apiUrl(endpoint), {
           headers: { 'X-Tenant-ID': activeTenantId }
         });
         const data = await res.json();
@@ -471,7 +512,7 @@
       const box = document.getElementById('explainResultBox');
       box.innerHTML = '<span class="text-slate-400"><i class="fa-solid fa-spinner fa-spin"></i> Running PostgreSQL EXPLAIN ANALYZE...</span>';
       try {
-        const res = await fetch('/api/v1/explain/analyze', {
+        const res = await fetch(apiUrl('/api/v1/explain/analyze'), {
           headers: { 'X-Tenant-ID': activeTenantId }
         });
         const data = await res.json();
@@ -503,7 +544,7 @@
     async function triggerInvoiceTask(forceCold) {
       document.getElementById('srvState').textContent = forceCold ? 'Purging Container...' : 'Invoking Worker...';
       try {
-        const res = await fetch('/api/v1/analytics/invoices', {
+        const res = await fetch(apiUrl('/api/v1/analytics/invoices'), {
           headers: { 'X-Tenant-ID': activeTenantId }
         });
         const data = await res.json();
@@ -525,8 +566,9 @@
       }
     }
 
-    // Initialize product options
+    // Initialize product options & check backend health
     updateProductSelect();
+    checkEngineStatus();
   </script>
 </body>
 </html>
