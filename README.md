@@ -3,6 +3,7 @@
 
 > **GitHub Repository:** [https://github.com/ahsanalich358/Lab-6-Assignment-AWT](https://github.com/ahsanalich358/Lab-6-Assignment-AWT)  
 > **Live Deployed Frontend (Vercel):** [https://lab-6-assignment-awt-public.vercel.app/](https://lab-6-assignment-awt-public.vercel.app/)  
+> **Live Deployed Backend (Render):** [https://lab-6-assignment-awt.onrender.com/](https://lab-6-assignment-awt.onrender.com/)  
 > **Course:** CSC337 - Advanced Web Technologies (Lectures 17 & 18)
 
 ---
@@ -57,20 +58,20 @@ flowchart LR
 
 ## 🌐 2. Deployment Guide (Vercel & Render)
 
-### Option A: Deploy on Render (Recommended for Web Service + Background Kafka)
-1. Go to [Render Dashboard](https://dashboard.render.com/) $\rightarrow$ Click **New +** $\rightarrow$ **Web Service**.
-2. Connect your GitHub repository: `https://github.com/ahsanalich358/Lab-6-Assignment-AWT`
-3. Render automatically reads our `render.yaml`:
-   - **Environment:** `Node`
-   - **Build Command:** `npm install`
-   - **Start Command:** `npm start`
-   - **Health Check Path:** `/health`
-4. Click **Create Web Service**. Both your Backend and Interactive Frontend will be live!
+### Live Endpoints:
+- **Live Frontend (Vercel):** [https://lab-6-assignment-awt-public.vercel.app/](https://lab-6-assignment-awt-public.vercel.app/)
+- **Live Backend API (Render):** [https://lab-6-assignment-awt.onrender.com/](https://lab-6-assignment-awt.onrender.com/)
+- **Live Health Probe:** [https://lab-6-assignment-awt.onrender.com/health](https://lab-6-assignment-awt.onrender.com/health)
 
-### Option B: Deploy on Vercel
-1. Import repository on [Vercel](https://vercel.com/new).
-2. Vercel automatically detects `vercel.json` and `api/index.js` (Serverless Edge Function).
-3. Click **Deploy**.
+### Option A: Backend on Render
+1. Repository deployed on Render as a Web Service.
+2. Build Command: `npm install`
+3. Start Command: `npm start`
+4. Health check at `/health` returns `200 OK`.
+
+### Option B: Frontend on Vercel
+1. Deployed on Vercel Edge Network serving `public/index.html`.
+2. Automatically connected to the live Render backend via `defaultRemoteBackend`.
 
 ---
 
@@ -312,7 +313,7 @@ Lab Assignment 06/
 ## 🏆 Summary Checklist for Submission
 
 - [x] **Live Deployed Frontend (Vercel):** [https://lab-6-assignment-awt-public.vercel.app/](https://lab-6-assignment-awt-public.vercel.app/)
-- [x] **Live Deployed Backend Ready (Render):** `render.yaml` configured with auto-seed build command.
+- [x] **Live Deployed Backend (Render):** [https://lab-6-assignment-awt.onrender.com/](https://lab-6-assignment-awt.onrender.com/)
 - [x] **Cloud Kafka Ready:** Upstash / Aiven config ready in `.env` and `client.js`.
 - [x] **Public GitHub Repo:** Clean commits pushed to [https://github.com/ahsanalich358/Lab-6-Assignment-AWT](https://github.com/ahsanalich358/Lab-6-Assignment-AWT).
 - [x] **README Benchmarking:** Architecture diagram, EXPLAIN ANALYZE outputs, and test accounts documented.

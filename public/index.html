@@ -316,11 +316,12 @@
   <!-- Frontend Logic -->
   <script>
     let activeTenantId = 'tenant-alpha';
-    let apiBaseUrl = localStorage.getItem('saas_api_base_url') || '';
+    const defaultRemoteBackend = 'https://lab-6-assignment-awt.onrender.com';
+    let apiBaseUrl = localStorage.getItem('saas_api_base_url') || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? '' : defaultRemoteBackend);
 
     const apiInput = document.getElementById('apiBaseInput');
-    if (apiInput && apiBaseUrl) {
-      apiInput.value = apiBaseUrl;
+    if (apiInput) {
+      apiInput.value = apiBaseUrl || defaultRemoteBackend;
     }
 
     function updateApiBaseUrl() {
