@@ -165,3 +165,15 @@ npm start
 - [x] **EXPLAIN ANALYZE Outputs:** Documented with before & after metrics.
 - [x] **Test Accounts:** Tenant A (`tenant-alpha`) & Tenant B (`tenant-beta`) documented.
 - [x] **Live Viva Guide:** 4 easy steps documented above.
+## Screenshots:
+<img width="944" height="435" alt="image" src="https://github.com/user-attachments/assets/dcbc98b7-db16-4e8a-8372-1a29f5d62c89" />
+
+<img width="946" height="441" alt="image" src="https://github.com/user-attachments/assets/fadea502-a1a8-4504-babc-cee3f58b19b0" />
+
+<img width="908" height="251" alt="image" src="https://github.com/user-attachments/assets/ff61c456-f0de-4d4c-b7c9-b8d31aecfc65" />
+
+<img width="927" height="206" alt="image" src="https://github.com/user-attachments/assets/1a8bfc05-2d25-40c4-9a72-4ae7ed0fef34" />
+
+
+
+
